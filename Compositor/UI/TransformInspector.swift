@@ -10,6 +10,11 @@ struct TransformInspector: View {
         HStack(spacing: 12) {
           Text(session.transformTargetsMask ? "Transform Mask" : "Transform").font(ToolHeaderStyle.titleFont)
               .padding(.leading, 18)
+          if session.selectedLayerIDs.count == 1, let kind = session.activeLayer?.adjustment?.kind, kind.isEditable {
+              Button("Edit \(kind.rawValue)") { session.adjustmentEditingID = session.activeLayerID }
+                  .help("The selected adjustment's settings")
+                  .accessibilityIdentifier("editAdjustment")
+          }
           // Command flips Auto Select while it's held, and the box shows it flipped (see HeldModifiers).
           Toggle("Auto Select", isOn: Binding(get: { session.transformAutoSelect != held.contains(.command) },
                                               set: { session.transformAutoSelect = $0 != held.contains(.command) }))

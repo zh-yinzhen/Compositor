@@ -839,7 +839,7 @@ final class LayerTableView: NSTableView {
             return
         }
         if row >= 0, let cell = view(atColumn: 0, row: row, makeIfNecessary: false) as? LayerCell,
-           cell.selectEffect(at: event.locationInWindow, editing: event.clickCount > 1) {
+           cell.selectEffect(at: event.locationInWindow, editing: true) {
             window?.makeFirstResponder(self)
             return
         }
@@ -1581,7 +1581,7 @@ private final class LayerEffectRow: NSView, NSDraggingSource {
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8)
         ])
-        toolTip = "Click to select; double-click to edit; Option-drag to copy " + kind.rawValue.lowercased()
+        toolTip = "Click to edit; Option-drag to copy " + kind.rawValue.lowercased()
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel(kind.rawValue + " effect")
@@ -1606,7 +1606,7 @@ private final class LayerEffectRow: NSView, NSDraggingSource {
         copyDown = nil
         if event.modifierFlags.contains(.option), !event.modifierFlags.contains(.command), session?.canEditLayers == true {
             copyDown = event
-        } else { select(editing: event.clickCount > 1) }
+        } else { select(editing: true) }
     }
     override func mouseUp(with event: NSEvent) {
         if copyDown != nil { copyDown = nil; select(editing: false) }

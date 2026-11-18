@@ -267,6 +267,44 @@ struct ShapeToolTests {
         }
     }
 
+    /// The selected shape's own color is what the bar edits, and the pixels change before OK. Cancel puts them back.
+    @Test func selectedShapeColorAndRadiusUpdateImmediately() throws {
+        let session = makeSession()
+        drag(session, from: CGPoint(x: 10, y: 10), to: CGPoint(x: 40, y: 30))
+        session.foregroundColor = PaletteColor(red: 0, green: 0, blue: 1)
+        session.selectTool(.move)
+        #expect(session.inspectedShape?.style.color == PaletteColor(red: 1, green: 0, blue: 0))
+        let before = session.history.undoCount
+        session.openShapeColorPicker()
+        try #require(session.colorPicker).hsb.setRGB(PaletteColor(red: 0, green: 0, blue: 1))
+        session.previewPickedColor()
+        #expect(session.activeLayer?.liveShape?.style.color == PaletteColor(red: 0, green: 0, blue: 1))
+        #expect(sample(try #require(session.activeLayer?.asset?.image), x: 15, y: 10).blue > 200)
+        session.closeColorPicker(commit: false)
+        #expect(session.activeLayer?.liveShape?.style.color == PaletteColor(red: 1, green: 0, blue: 0))
+        #expect(session.history.undoCount == before)
+
+        session.openShapeColorPicker()
+        try #require(session.colorPicker).hsb.setRGB(PaletteColor(red: 0, green: 0, blue: 1))
+        session.previewPickedColor()
+        session.closeColorPicker(commit: true)
+        #expect(session.history.undoCount == before + 1)
+        #expect(session.foregroundColor == PaletteColor(red: 0, green: 0, blue: 1))
+        session.updateSelectedShape { $0.cornerRadius = 8 }
+        #expect(session.activeLayer?.liveShape?.style.cornerRadius == 8)
+        #expect(session.history.undoCount == before + 2)
+        session.undo()
+        #expect(session.activeLayer?.liveShape?.style.cornerRadius == 0)
+        session.undo()
+        #expect(session.activeLayer?.liveShape?.style.color == PaletteColor(red: 1, green: 0, blue: 0))
+    }
+
+    private func sample(_ image: CGImage, x: Int, y: Int) -> (red: Int, green: Int, blue: Int) {
+        let rep = NSBitmapImageRep(cgImage: image)
+        let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
+        return (Int((color?.redComponent ?? 0) * 255), Int((color?.greenComponent ?? 0) * 255), Int((color?.blueComponent ?? 0) * 255))
+    }
+
     /// Scaling a line stretches it as it looked while being scaled, rather than redrawing it at its old width.
     @Test func aScaledLineStretchesInsteadOfKeepingItsWidth() async throws {
         let session = makeSession()

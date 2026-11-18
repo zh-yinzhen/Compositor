@@ -257,14 +257,6 @@ struct FilterSheet: View {
         .fixedSize(horizontal: false, vertical: !isCameraRaw)
 
         .disabled(edit?.committing == true)
-        // Filter colors preview live while the app's color picker is open.
-        .onChange(of: session.colorPicker?.color) { _, _ in
-            session.previewGradientMapColor()
-            session.previewVignetteColor()
-            session.previewRimLightColor()
-            session.previewVolumetricLightColor()
-            session.previewDitherColor()
-        }
     }
 
     @ViewBuilder private var ditherControls: some View {

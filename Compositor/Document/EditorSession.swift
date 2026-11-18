@@ -203,6 +203,8 @@ final class EditorSession {
     /// The layer whose effects panel is open.
     var effectsEditing: LayerEffectSelection?
     var effectsEditingOriginal: LayerEffects?
+    /// The effect color picker has a history edit open around the whole drag, so each preview isn't its own undo.
+    @ObservationIgnored var effectColorEditOpen = false
     var effectSelection: LayerEffectSelection?
     @ObservationIgnored var effectsPreviews = EffectsPreviewCache()
     var projectURL: URL?
@@ -362,6 +364,10 @@ final class EditorSession {
     var marqueeKind = LassoKind.rectangle
     var textDraft: TextDraft? { didSet { if oldValue != nil && textDraft == nil { resumeFileRequests() } } }
     var textDefaults = LayerTextStyle()
+    /// A selected text layer being recolored from the inspector, and the text it had when the picker opened.
+    /// One undo step for the whole drag; Cancel puts this back. Nil while text is open on the canvas, which previews
+    /// through `textDraft` instead.
+    @ObservationIgnored var textColorEdit: (id: UUID, text: LayerText, asset: ImportedImage)?
     var shapeKind = ShapeKind.rectangle
     /// Corner radius in pixels for rectangles the Shape tool draws; 0 keeps the corners square.
     var shapeCornerRadius: Double = 0
@@ -373,6 +379,9 @@ final class EditorSession {
     var shapeLineCap = ShapeLineCap.square
     /// The shape being dragged out with the Shape tool, before it becomes a layer.
     var shapeDraft: ShapeDraft?
+    /// A selected shape being restyled from the inspector, and the shape it had when the drag or picker began.
+    /// One undo step for the gesture; Cancel puts this back.
+    @ObservationIgnored var shapeStyleEdit: (id: UUID, shape: LayerShape, asset: ImportedImage)?
     var selectionModeChoice = SelectionMode.replace
     /// Mode implied by the Shift/Option keys currently held, nil when neither is.
     var heldSelectionMode: SelectionMode?

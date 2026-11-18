@@ -58,7 +58,7 @@ struct TypeToolTests {
 
         session.openTextColorPicker()
         try #require(session.colorPicker).hsb.setRGB(PaletteColor(red: 1, green: 0, blue: 0))
-        session.previewTextColor()
+        session.previewPickedColor()
         #expect(session.textDraft?.style.red == 1)
         #expect(session.textDraft?.style.green == 0)
         #expect(session.foregroundColor == .black)
@@ -69,7 +69,7 @@ struct TypeToolTests {
 
         session.openTextColorPicker()
         try #require(session.colorPicker).hsb.setRGB(PaletteColor(red: 0, green: 0, blue: 1))
-        session.previewTextColor()
+        session.previewPickedColor()
         session.closeColorPicker(commit: true)
         #expect(session.textDraft?.style.blue == 1)
         #expect(session.foregroundColor == PaletteColor(red: 0, green: 0, blue: 1))
@@ -350,6 +350,39 @@ struct TypeToolTests {
     }
 
     private let red = PaletteColor(red: 1, green: 0, blue: 0)
+
+    /// A selected text layer's color is what the Type bar shows, and the canvas follows the picker before OK.
+    @Test func selectedTextColorUpdatesImmediately() throws {
+        let session = makeSession()
+        session.beginText(at: CGPoint(x: 30, y: 40))
+        session.textDraft?.style.content = "Hello"
+        #expect(session.finishText())
+        session.foregroundColor = PaletteColor(red: 0, green: 0, blue: 1)
+        session.selectTool(.move)
+        #expect(session.typeColor == .black)
+        let before = session.history.undoCount
+        session.openTextColorPicker()
+        #expect(session.textDraft == nil)
+        #expect(session.colorPicker != nil)
+        try #require(session.colorPicker).hsb.setRGB(red)
+        session.previewPickedColor()
+        #expect(session.activeLayer?.liveText?.style.red == 1)
+        #expect(redAndDarkPixels(try #require(session.activeLayer?.asset?.image)).red > 0)
+        session.closeColorPicker(commit: false)
+        #expect(session.activeLayer?.liveText?.style.red == 0)
+        #expect(session.history.undoCount == before)
+        #expect(session.foregroundColor.blue == 1)
+
+        session.openTextColorPicker()
+        try #require(session.colorPicker).hsb.setRGB(red)
+        session.previewPickedColor()
+        session.closeColorPicker(commit: true)
+        #expect(session.activeLayer?.liveText?.style.red == 1)
+        #expect(session.history.undoCount == before + 1)
+        #expect(session.foregroundColor == red)
+        session.undo()
+        #expect(session.activeLayer?.liveText?.style.red == 0)
+    }
 
     @Test func colorAppliesToSelectionAndFollowsEdits() {
         var style = LayerTextStyle()

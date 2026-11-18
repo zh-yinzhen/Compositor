@@ -25,8 +25,6 @@ struct EffectsSheet: View {
             }
         }
         .padding(20).frame(width: 340).fixedSize()
-        // The picker previews its working color on the layer while it is open.
-        .onChange(of: session.colorPicker?.color) { _, _ in session.previewEffectColor() }
     }
 
     @ViewBuilder private var stroke: some View {

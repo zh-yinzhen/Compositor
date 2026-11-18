@@ -278,7 +278,9 @@ extension EditorSession {
     func selectEffect(_ kind: LayerEffectKind, on id: UUID, editing: Bool = false) {
         guard canEditLayers, document?.layers.first(where: { $0.id == id })?.effects?.contains(kind) == true else { return }
         let selection = LayerEffectSelection(layerID: id, kind: kind)
-        if editing, effectsEditing != selection { finishEffectsEditing(commit: false) }
+        // Keep the effect that was open. Cancel is the panel's own button; choosing another effect should not throw
+        // those edits away.
+        if editing, effectsEditing != selection { finishEffectsEditing(commit: true) }
         selectLayer(id)
         selectedLayerIDs = [id]
         isMaskSelected = false

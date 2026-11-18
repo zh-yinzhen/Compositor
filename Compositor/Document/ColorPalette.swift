@@ -65,20 +65,37 @@ extension EditorSession {
         }
         colorPicker = picker
     }
-    /// What the Type bar's swatch shows and edits: the text being edited, otherwise the foreground color the next
-    /// text will use. A text layer that is only selected is not touched.
-    /// With letters selected, it is the color of the first of them; with just a caret, the letter before it, the
-    /// color typing there gives.
+    /// What the Type bar's swatch shows and edits. Text open on the canvas uses the letters that are selected, or the
+    /// letter before the caret. A selected text layer uses its own color, so the bar describes that layer. Otherwise
+    /// it is the foreground color the next text will use.
     var typeColor: PaletteColor {
-        guard let draft = textDraft else { return foregroundColor }
-        let selection = draft.selection
-        return draft.style.color(at: selection.length > 0 ? selection.location : max(0, selection.location - 1))
+        if let draft = textDraft {
+            let selection = draft.selection
+            return draft.style.color(at: selection.length > 0 ? selection.location : max(0, selection.location - 1))
+        }
+        if selectedLayerIDs.count == 1, let style = activeLayer?.liveText?.style {
+            return PaletteColor(red: style.red, green: style.green, blue: style.blue)
+        }
+        return foregroundColor
     }
     func openTextColorPicker() {
-        guard canEditPalette, colorPicker == nil, tool == .type else { return }
-        let picker = ColorPickerState(target: .text(draftID: textDraft?.id), original: typeColor)
-        if let draft = textDraft { picker.editedText = (draft.id, draft.style) }
-        colorPicker = picker
+        guard canEditPalette, colorPicker == nil else { return }
+        if let draft = textDraft {
+            let picker = ColorPickerState(target: .text(draftID: draft.id), original: typeColor)
+            picker.editedText = (draft.id, draft.style)
+            colorPicker = picker
+            return
+        }
+        // A selected text layer recolors in place: the canvas updates as the picker moves, without opening the
+        // caret. The Type tool with nothing selected still edits the color the next text starts in.
+        if selectedLayerIDs.count == 1, let layer = activeLayer, let text = layer.liveText, let asset = layer.asset {
+            beginEdit("Text Color")
+            textColorEdit = (layer.id, text, asset)
+            colorPicker = ColorPickerState(target: .text(draftID: nil), original: typeColor)
+            return
+        }
+        guard tool == .type else { return }
+        colorPicker = ColorPickerState(target: .text(draftID: nil), original: typeColor)
     }
     /// Paints the selected letters of the text being edited, or all of it when nothing is selected.
     func setDraftTextColor(_ color: PaletteColor) {
@@ -96,6 +113,9 @@ extension EditorSession {
     /// Opens the app's picker on a layer effect's color.
     func openEffectColorPicker(_ kind: LayerEffectKind) {
         guard canEditPalette, colorPicker == nil, effectsEditing != nil else { return }
+        // One undo step for the drag. Each preview writes the effect inside this edit.
+        beginEdit("Edit " + kind.rawValue)
+        effectColorEditOpen = true
         colorPicker = ColorPickerState(target: .effect(kind: kind), original: editingEffects.color(kind) ?? .black)
     }
     func closeColorPicker(commit: Bool) {
@@ -107,20 +127,36 @@ extension EditorSession {
                     restoreDraftTextColors(edited.style)
                 }
             case .text(let draftID):
-                if tool == .type, textDraft?.id == draftID {
-                    let color = commit ? colorPicker.color : colorPicker.original
-                    if draftID != nil {
-                        if commit { setDraftTextColor(color); refreshCanvasPreview?() }
-                        else if let edited = colorPicker.editedText { restoreDraftTextColors(edited.style) }
-                    } else if commit {
-                        textDefaults.red = color.red; textDefaults.green = color.green; textDefaults.blue = color.blue
-                    }
-                    // The text color is the foreground color: picking one in the Type bar moves the swatch too.
-                    if commit, !isMaskSelected { foregroundColor = color }
+                if textColorEdit != nil {
+                    if !commit { restoreTextColorEdit() }
+                    else if !isMaskSelected { foregroundColor = colorPicker.color }
+                    textColorEdit = nil
+                    endEdit()
+                    break
+                }
+                let color = commit ? colorPicker.color : colorPicker.original
+                if let draftID {
+                    guard textDraft?.id == draftID else { break }
+                    if commit { setDraftTextColor(color); refreshCanvasPreview?() }
+                    else if let edited = colorPicker.editedText { restoreDraftTextColors(edited.style) }
+                } else if commit, textDraft == nil {
+                    textDefaults.red = color.red; textDefaults.green = color.green; textDefaults.blue = color.blue
+                }
+                // The text color is the foreground color: picking one in the Type bar moves the swatch too.
+                if commit, !isMaskSelected { foregroundColor = color }
+            case .shape:
+                if !commit { finishShapeStyleEdit(commit: false) }
+                else {
+                    if !isMaskSelected { foregroundColor = colorPicker.color }
+                    finishShapeStyleEdit(commit: true)
                 }
             case .effect(let kind):
                 let color = commit ? colorPicker.color : colorPicker.original
                 changeEffects { $0.setColor(color, for: kind) }
+                if effectColorEditOpen {
+                    effectColorEditOpen = false
+                    endEdit()
+                }
             case .gradientMap(let highlights):
                 // The end has been previewing the working color; Cancel puts the original back.
                 setGradientMapColor(commit ? colorPicker.color : colorPicker.original, highlights: highlights)
@@ -159,16 +195,38 @@ extension EditorSession {
         guard let colorPicker, case .effect(let kind) = colorPicker.target else { return }
         changeEffects { $0.setColor(colorPicker.color, for: kind) }
     }
-    /// Preview the picker's working color in the active on-canvas text draft.
+    /// The open picker's working color, applied to whatever it is editing. The picker calls this on every change,
+    /// so the canvas follows the drag even when the bar that opened it is no longer the one on screen.
+    func previewPickedColor() {
+        guard let colorPicker else { return }
+        switch colorPicker.target {
+        case .text, .palette: previewTextColor()
+        case .shape: previewShapeColor()
+        case .effect: previewEffectColor()
+        case .gradientMap: previewGradientMapColor()
+        case .vignette: previewVignetteColor()
+        case .rimLight: previewRimLightColor()
+        case .volumetricLight: previewVolumetricLightColor()
+        case .dither: previewDitherColor()
+        case .dialog: previewDialogColor()
+        }
+    }
+    /// Preview the picker's working color on the text it is editing: the letters open on the canvas, or the selected
+    /// text layer.
     func previewTextColor() {
         guard let colorPicker else { return }
+        if let edit = textColorEdit {
+            guard case .text = colorPicker.target else { return }
+            applyLiveTextColor(colorPicker.color, to: edit.id)
+            return
+        }
         let draftID: UUID?
         switch colorPicker.target {
         case .text(let id): draftID = id
         case .palette(background: false): draftID = colorPicker.editedText?.draftID
         default: return
         }
-        guard let draftID, tool == .type, textDraft?.id == draftID else { return }
+        guard let draftID, textDraft?.id == draftID else { return }
         setDraftTextColor(colorPicker.color)
         refreshCanvasPreview?()
     }
@@ -320,11 +378,14 @@ enum ColorPickerTarget: Equatable {
     /// Dither's Two Colors: the dark one or the light one.
     case dither(light: Bool)
     case text(draftID: UUID?)
+    /// The selected shape layer's fill.
+    case shape(layerID: UUID)
     /// A dialog's own color, such as Export JPEG's background for transparency. The dialog is told as it changes.
     case dialog(title: String)
     var title: String {
         switch self {
         case .text: return "Color Picker (Text Color)"
+        case .shape: return "Color Picker (Shape Color)"
         case .effect(let kind): return "Color Picker (\(kind.rawValue) Color)"
         case .palette(let background): return background ? "Color Picker (Background Color)" : "Color Picker (Foreground Color)"
         case .gradientMap(let highlights): return highlights ? "Color Picker (Gradient Map Highlights)" : "Color Picker (Gradient Map Shadows)"

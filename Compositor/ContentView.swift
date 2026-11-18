@@ -24,9 +24,23 @@ struct ContentView: View {
         return workspace.canReceiveDrag(into: workspace.current.id)
     }
     // Extracted from `body`: as one expression the type checker times out (Xcode 26.1).
+    /// Move edits the selected layer, so its bar is that layer's own properties: text, or a shape. The Type and Shape
+    /// tools keep their bars either way, and a text or shape layer selected with Move uses the same bar.
+    private var headerEditsText: Bool {
+        session.tool == .type || (session.tool == .move && (session.textDraft != nil || (session.selectedLayerIDs.count == 1 && session.activeLayer?.liveText != nil)))
+    }
+    private var headerEditsShape: Bool {
+        !headerEditsText && (session.tool == .shape || (session.tool == .move && session.inspectedShape != nil))
+    }
     @ViewBuilder private var toolHeaders: some View {
         Group {
-            if session.tool == .move {
+            if headerEditsText {
+                TypeControls(session: session).id(session.textDraft?.id ?? session.activeLayerID)
+                Divider()
+            } else if headerEditsShape {
+                ShapeControls(session: session).id(session.inspectedShape?.id ?? session.activeLayerID)
+                Divider()
+            } else if session.tool == .move {
                 TransformInspector(session: session).id(session.activeLayerID)
                 Divider()
             }
@@ -40,14 +54,6 @@ struct ContentView: View {
             }
             if session.tool == .gradient {
                 GradientControls(session: session)
-                Divider()
-            }
-            if session.tool == .type {
-                TypeControls(session: session)
-                Divider()
-            }
-            if session.tool == .shape {
-                ShapeControls(session: session)
                 Divider()
             }
             if session.tool == .eyedropper {

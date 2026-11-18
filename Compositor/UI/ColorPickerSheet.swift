@@ -6,6 +6,9 @@ import AppKit
 /// the canvas stays visible and can be clicked to sample a color.
 struct ColorPickerSheet: View {
     @Bindable var state: ColorPickerState
+    /// The canvas (or a dialog) follows the working color. Called on every change, from this panel, so it does not
+    /// depend on whichever bar opened the picker still being on screen.
+    var onPreview: () -> Void = {}
     let finish: (Bool) -> Void
     @State private var hexDraft = ""
     @FocusState private var hexFocused: Bool
@@ -48,6 +51,7 @@ struct ColorPickerSheet: View {
         .padding(20)
         .fixedSize()
         .onAppear { hexDraft = color.hex; syncChannels() }
+        .onChange(of: state.hsb) { _, _ in onPreview() }
         // The fields follow the color, except the one being typed in, which would otherwise rewrite itself mid-entry.
         .onChange(of: color) { _, new in
             if !hexFocused { hexDraft = new.hex }
@@ -237,7 +241,9 @@ final class ColorPickerPanelController: NSObject {
             if session?.colorPicker != nil { session?.closeColorPicker(commit: false) }
         }
         panel.show(title: state.target.title,
-                   content: ColorPickerSheet(state: state) { [weak self, weak session] commit in
+                   content: ColorPickerSheet(state: state, onPreview: { [weak session] in
+                       session?.previewPickedColor()
+                   }) { [weak self, weak session] commit in
                        session?.closeColorPicker(commit: commit)
                        // Put away here too, not only when the palette notices the picker has gone.
                        if session?.colorPicker == nil { self?.close() }
@@ -264,7 +270,6 @@ struct DialogColorSwatch: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
-        .onChange(of: session.colorPicker?.color) { _, _ in session.previewDialogColor() }
         .onDisappear { Self.closePicker(session) }
     }
     static func closePicker(_ session: EditorSession) {

@@ -340,6 +340,125 @@ extension EditorSession {
         } catch { brushError = error.localizedDescription }
     }
 
+    /// The one selected shape the inspector edits. Nil while a shape is being dragged out, so the bar keeps describing
+    /// that drag, and nil when several layers are selected.
+    var inspectedShape: (id: UUID, style: LayerShapeStyle)? {
+        guard shapeDraft == nil, selectedLayerIDs.count == 1, let layer = activeLayer, let shape = layer.liveShape else { return nil }
+        return (layer.id, shape.style)
+    }
+
+    /// Starts one undo step around a drag that restyles the selected shape (a slider, or the color picker).
+    func beginShapeStyleEdit() {
+        guard shapeStyleEdit == nil, canEditLayers, let layer = activeLayer, let shape = layer.liveShape, let asset = layer.asset,
+              selectedLayerIDs == [layer.id] else { return }
+        beginEdit("Edit Shape")
+        shapeStyleEdit = (layer.id, shape, asset)
+    }
+
+    /// Ends the drag. Cancel puts back the shape the drag started from, which adds no undo step when nothing remains changed.
+    func finishShapeStyleEdit(commit: Bool) {
+        guard let edit = shapeStyleEdit else { return }
+        if !commit, let index = document?.layers.firstIndex(where: { $0.id == edit.id }) {
+            document?.layers[index].asset = edit.asset
+            document?.layers[index].shape = edit.shape
+            refreshCanvasPreview?()
+        } else if commit, let style = document?.layers.first(where: { $0.id == edit.id })?.liveShape?.style {
+            syncShapeToolDefaults(style)
+        }
+        shapeStyleEdit = nil
+        endEdit()
+    }
+
+    func openShapeColorPicker() {
+        guard canEditPalette, colorPicker == nil, let shape = inspectedShape else { return }
+        beginShapeStyleEdit()
+        guard shapeStyleEdit != nil else { return }
+        colorPicker = ColorPickerState(target: .shape(layerID: shape.id), original: shape.style.color)
+    }
+
+    /// The shape color picker's working color, drawn into the selected shape as it moves.
+    func previewShapeColor() {
+        guard let colorPicker, case .shape(let id) = colorPicker.target, shapeStyleEdit?.id == id else { return }
+        let color = colorPicker.color
+        updateSelectedShape {
+            $0.red = color.red
+            $0.green = color.green
+            $0.blue = color.blue
+        }
+    }
+
+    /// Changes the selected shape and draws it again at the same pixel size, so a new color or radius shows at once.
+    /// A drag already in `shapeStyleEdit` folds into that one undo step; otherwise this is a step of its own.
+    func updateSelectedShape(_ change: (inout LayerShapeStyle) -> Void) {
+        guard let current = inspectedShape, let index = document?.layers.firstIndex(where: { $0.id == current.id }),
+              let layer = document?.layers[index], let asset = layer.asset, layer.liveShape != nil else { return }
+        let gesturing = shapeStyleEdit?.id == current.id
+        guard gesturing || canEditLayers else { return }
+        var style = layer.liveShape?.style ?? current.style
+        change(&style)
+        normalizeShapeStyle(&style)
+        guard style != layer.liveShape?.style else { return }
+        let size = CGSize(width: asset.image.width, height: asset.image.height)
+        guard size.width >= 1, size.height >= 1, Int(size.width) * Int(size.height) <= Self.maxShapePixels,
+              let image = try? Self.shapeImage(style.kind, size: size, color: style.color, cornerRadius: style.cornerRadius,
+                                               smoothing: style.smoothing == true, lineWidth: style.lineWidth ?? 0,
+                                               start: style.start, end: style.end,
+                                               lineStyle: style.lineStyle ?? .solid, lineCap: style.lineCap ?? .round),
+              let thumbnail = try? PixelInvert.thumbnail(of: image) else { return }
+        if !gesturing { beginEdit("Edit Shape") }
+        document?.layers[index].asset = ImportedImage(image: image, thumbnail: thumbnail, name: asset.name)
+        document?.layers[index].shape = LayerShape(style: style, image: image)
+        // A drag previews only. The tool's next-shape settings follow once that drag is kept.
+        if !gesturing { syncShapeToolDefaults(style); endEdit() }
+        refreshCanvasPreview?()
+    }
+
+    /// A line keeps its width and ends; a rectangle keeps its corners; the other fields belong to the other kinds.
+    private func normalizeShapeStyle(_ style: inout LayerShapeStyle) {
+        switch style.kind {
+        case .line:
+            if (style.lineWidth ?? 0) < 1 { style.lineWidth = max(1, CGFloat(shapeLineWidth)) }
+            if style.start == nil { style.start = CGPoint(x: 0, y: 0.5) }
+            if style.end == nil { style.end = CGPoint(x: 1, y: 0.5) }
+            style.cornerRadius = 0
+            style.smoothing = nil
+            if style.lineStyle == .solid { style.lineStyle = nil }
+            if style.lineCap == .round { style.lineCap = nil }
+        case .ellipse:
+            style.cornerRadius = 0
+            style.smoothing = nil
+            style.lineWidth = nil
+            style.start = nil
+            style.end = nil
+            style.lineStyle = nil
+            style.lineCap = nil
+        case .rectangle:
+            style.cornerRadius = min(5000, max(0, style.cornerRadius))
+            if style.smoothing != true { style.smoothing = nil }
+            style.lineWidth = nil
+            style.start = nil
+            style.end = nil
+            style.lineStyle = nil
+            style.lineCap = nil
+        }
+    }
+
+    /// The next shape drawn matches the one just edited.
+    private func syncShapeToolDefaults(_ style: LayerShapeStyle) {
+        shapeKind = style.kind
+        switch style.kind {
+        case .rectangle:
+            shapeCornerRadius = Double(style.cornerRadius)
+            shapeSmoothing = style.smoothing == true
+        case .line:
+            if let width = style.lineWidth { shapeLineWidth = Double(width) }
+            shapeLineStyle = style.lineStyle ?? .solid
+            shapeLineCap = style.lineCap ?? .round
+        case .ellipse:
+            break
+        }
+    }
+
     /// "Rectangle 1", "Ellipse 2", … skipping names already in the document.
     func nextShapeName(_ kind: ShapeKind) -> String {
         let names = Set(document?.layers.map(\.name) ?? [])

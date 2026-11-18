@@ -358,6 +358,28 @@ extension EditorSession {
         return true
     }
 
+    /// Recolors a selected text layer while the color picker is open. The whole layer becomes `color`; Cancel puts
+    /// back the text saved when the picker opened. No history of its own: the picker owns that edit.
+    func applyLiveTextColor(_ color: PaletteColor, to id: UUID) {
+        guard textColorEdit?.id == id, let index = document?.layers.firstIndex(where: { $0.id == id }),
+              let layer = document?.layers[index], var style = layer.liveText?.style, let asset = layer.asset else { return }
+        let current = PaletteColor(red: style.red, green: style.green, blue: style.blue)
+        if style.colorRuns == nil, current == color { return }
+        style.setColor(color, in: NSRange(location: 0, length: 0))
+        guard style.isValid, let image = try? Self.textImage(style), let thumbnail = try? PixelInvert.thumbnail(of: image) else { return }
+        document?.layers[index].asset = ImportedImage(image: image, thumbnail: thumbnail, name: asset.name)
+        document?.layers[index].text = LayerText(style: style, image: image)
+        refreshCanvasPreview?()
+    }
+
+    /// Puts back the text a color-picker drag started from, the same image included, so Cancel adds no undo step.
+    func restoreTextColorEdit() {
+        guard let edit = textColorEdit, let index = document?.layers.firstIndex(where: { $0.id == edit.id }) else { return }
+        document?.layers[index].asset = edit.asset
+        document?.layers[index].text = edit.text
+        refreshCanvasPreview?()
+    }
+
     var currentTextStyle: LayerTextStyle { textDraft?.style ?? activeLayer?.liveText?.style ?? textDefaults }
 
     /// While the font menu is open, the text being edited shows the face under the pointer; `endFontPreview` puts it
